@@ -1,30 +1,47 @@
+/**
+*   Arduino-based Flappy Bird Clone using Dot Matrix
+*   
+*   By Roland Pelayo
+*   
+*   v1.0 (1/18/2024) - First commit
+*   v1.1 (1/22/2024) - Addded sound. Cleaned up code.
+*
+ */
+
+
 #include <LEDMatrixDriver.hpp>
 #include "fontmatrix.h"
 
+#define MARQUEE_ANIM_DELAY  100     // Marquee speed (lower nubmers = faster)
+#define GAME_FRAME_RATE     400     // Game frame rate (lower nubmers = faster)
+#define MUTE                1       // Comment out if sound is to be disabled
+
+//dot matrix connections
 const uint8_t LEDMATRIX_CS_PIN = 9;
 const int LEDMATRIX_SEGMENTS = 1;
 const int LEDMATRIX_WIDTH  = LEDMATRIX_SEGMENTS * 8;
-
-// The LEDMatrixDriver class instance
-LEDMatrixDriver lmd(LEDMATRIX_SEGMENTS, LEDMATRIX_CS_PIN);
-
-int buttonPin = 2;
-
-int timeLine = 0;       //variable used to determine the current position of obstacle
-int birdHeight = 3;     //variable used to determine the current position of bird
-int holePosition = 0;   //variable used to determine the current position of hole in obstacle
-bool falling = true;    //variable to indicate if bird is falling or rising
-int riseCount = 0;      //variable used to count bird position as it jumps
-int jumpHeight = 1;     //variable that determines how many dots the bird jumps with every press
-int maxJump = 2;        //variable that determines the maximum height the bird jumps before falling
-bool startGame = false; //variable flag to start the game
+const int MID_POS = 4;              //bird x position at the start (also middle of matrix)
+const int INIT_BIRD_POS = 3;        //bird y position at the start
+const int JUMP_HEIGHT = 1;          //how many dots the bird jumps with every press
+const int MAX_JUMP = 2;             //the maximum height the bird jumps before falling
 
 // Marquee text on intro
 char text[] = "ARDUINO FLAPPY BIRD";
 
-// Marquee speed (lower nubmers = faster)
-const int ANIM_DELAY = 100;
-int x = 0;
+// The LEDMatrixDriver class instance
+LEDMatrixDriver lmd(LEDMATRIX_SEGMENTS, LEDMATRIX_CS_PIN);
+
+// Action button. Must be an external interrupt pin
+int buttonPin = 2;
+int buzzerPin = 5;
+
+int timeLine = 0;                   //variable used to determine the current position of obstacle
+int birdHeight = INIT_BIRD_POS;     //variable used to determine the current position of bird
+int holePosition = 0;               //variable used to determine the current position of hole in obstacle
+bool falling = true;                //variable to indicate if bird is falling or rising
+int riseCount = 0;                  //variable used to count bird position as it jumps
+bool startGame = false;             //variable flag to start the game
+int marquee_pos_x = 0;              //variable used to set marquee text position
 
 /**
  * This function draws the bird to the given position.
@@ -73,76 +90,31 @@ void drawString(char* text, int len, int x, int y )
 }
 
 /**
- * Everything here is run once
- */
-void setup() {
-  Serial.begin(9600);
-  pinMode(buttonPin, INPUT_PULLUP);
-  pinMode(LED_BUILTIN, OUTPUT);
-  attachInterrupt(digitalPinToInterrupt(buttonPin), jumpBird, CHANGE);
-  randomSeed(analogRead(0));
-  lmd.setEnabled(true);
-  lmd.setIntensity(2);
-  holePosition = random(1, 5);
-  drawBird(birdHeight,4);
-}
-
-/**
- * Everything here repeats while power is on
-  */ 
-void loop() {
-  while(!startGame){
-    showIntro();
-  }
-  lmd.clear();
-  if(falling){
-     birdHeight++; 
-  } 
-  else{
-     birdHeight--;
-     riseCount = riseCount + jumpHeight;
-     if(riseCount == maxJump){
-        falling = true;
-        riseCount = 0;
-     } 
-        
-  }
-    
-  delay(500);
-  drawBird(birdHeight,4);
-  drawObstacle(holePosition);
-  lmd.display();
-  timeLine++;
-  if(timeLine == 8){
-    timeLine = 0;
-    holePosition = random(1, 5);
-  }
-
-  int holePlus = holePosition + 1;
-  int holePlus2 = holePosition + 2;
-  if((birdHeight != holePosition && timeLine == 4 && birdHeight != holePlus && birdHeight != holePlus2) || birdHeight == 7)
-  {
-    gameOver();
-  }
-
-}
-
-/**
  * Function that makes the bird jump
   */ 
 void jumpBird(){
-  if(!startGame){
-    startGame = true;
-  }else{
-    falling = false;
+  //handle button debounce
+  static unsigned long last_interrupt_time = 0;
+  unsigned long interrupt_time = millis();
+  // If interrupts come faster than 200ms, assume it's a bounce and ignore
+  if (interrupt_time - last_interrupt_time > 200){
+      if(!startGame){
+        startGame = true;
+      }
+      falling = !falling;  
   }
-  
+  last_interrupt_time = interrupt_time; 
 }
 
 /**
  * Function called when bird hits obstacle or the ground
   */ 
 void gameOver(){
+  //game over sound
+  #ifdef MUTE
+  gameOverBuzz();
+  #endif
+  
   //draw an X on matrix
   for(int j = 0; j < 3; j++){
     lmd.clear();
@@ -154,10 +126,28 @@ void gameOver(){
     lmd.display();
     delay(500);
   }
+
   //reset bird position and obstacles
   birdHeight = 3;
   lmd.clear();
   startGame = false;
+  timeLine = 0;
+  falling = true;
+}
+
+/**
+ * Function for game over sound
+ */
+void gameOverBuzz()
+{
+  int buzzLoop = 5;
+  while(buzzLoop != 0) {
+    analogWrite(buzzerPin, 200);
+    delay(200);
+    analogWrite(buzzerPin, 0);
+    delay(200);
+    buzzLoop--;
+  }
 }
 
 /**
@@ -166,20 +156,21 @@ void gameOver(){
 void showIntro()
 {
   // Draw the text to the current position
-	int len = strlen(text);
-	drawString(text, len, x, 0);
-	// In case you wonder why we don't have to call lmd.clear() in every loop: The font has a opaque (black) background...
+  int len = strlen(text);
+  drawString(text, len, marquee_pos_x, 0);
+  
+  // In case you wonder why we don't have to call lmd.clear() in every loop: The font has a opaque (black) background...
 
-	// Toggle display of the new framebuffer
-	lmd.display();
+  // Toggle display of the new framebuffer
+  lmd.display();
 
-	// Wait to let the human read the display
-	delay(ANIM_DELAY);
+  // Wait to let the human read the display
+  delay(MARQUEE_ANIM_DELAY);
 
-	// Advance to next coordinate
-	if( --x < len * -8 ) {
-		x = LEDMATRIX_WIDTH;
-	}
+  // Advance to next coordinate
+  if( --marquee_pos_x < len * -8 ) {
+    marquee_pos_x = LEDMATRIX_WIDTH;
+  }
 }
 
 /**
@@ -205,12 +196,60 @@ void drawSprite( byte* sprite, int x, int y, int width, int height )
   }
 }
 
-// Function to rotate the 'F' data counterclockwise
-void rotateCounterclockwise(byte* rotatedF, byte* standardF) {
-  for (int i = 0; i < 8; i++) {
-    standardF[i] = 0;
-    for (int j = 0; j < 8; j++) {
-      standardF[i] |= ((rotatedF[j] >> i) & 0x01) << (7 - j);
-    }
+/**
+ * Everything here is run once
+ */
+void setup() {
+  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  attachInterrupt(digitalPinToInterrupt(buttonPin), jumpBird, CHANGE);
+  randomSeed(analogRead(0));
+  lmd.setEnabled(true);
+  lmd.setIntensity(2);
+  //randomize first hole position
+  holePosition = random(1, 3);
+  //bird always starts at (3, 4)
+  drawBird(birdHeight,MID_POS);
+}
+
+/**
+ * Everything here repeats while power is on
+  */ 
+void loop() {
+  while(!startGame){
+    showIntro();
   }
+  lmd.clear();
+  if(falling){
+     birdHeight++; 
+  } 
+  else{
+     birdHeight--;
+     riseCount = riseCount + JUMP_HEIGHT;
+     if(riseCount == MAX_JUMP){
+        falling = true;
+        riseCount = 0;
+     } 
+        
+  }
+    
+  delay(GAME_FRAME_RATE);
+  
+  drawBird(birdHeight,4);
+  drawObstacle(holePosition);
+  lmd.display();
+  timeLine++;
+  if(timeLine == 8){
+    timeLine = 0;
+    holePosition = random(1, 5);
+  }
+
+  int holePlus = holePosition + 1;
+  int holePlus2 = holePosition + 2;
+  if((birdHeight != holePosition && timeLine == 4 && birdHeight != holePlus && birdHeight != holePlus2) || birdHeight == 7)
+  {
+    gameOver();
+  }
+
 }
