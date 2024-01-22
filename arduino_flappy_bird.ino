@@ -133,6 +133,7 @@ void gameOver(){
   startGame = false;
   timeLine = 0;
   falling = true;
+  holePosition = random(1, 3);
 }
 
 /**
